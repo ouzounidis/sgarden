@@ -1,0 +1,7 @@
+{
+  "name": "sgarden-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend app manifest for module type resolution."
+}
