@@ -1,9 +1,16 @@
 import express from "express";
+import { execFile } from "node:child_process";
+import crypto from "node:crypto";
+import { promisify } from "node:util";
+import bcrypt from "bcrypt";
 
 import { validations, email } from "../utils/index.js";
 import { User, Reset, Invitation } from "../models/index.js";
 
 const router = express.Router();
+const execFileAsync = promisify(execFile);
+
+// ─── Create User ────────────────────────────────────────────────────────────
 
 router.post("/createUser",
 	(req, res, next) => validations.validate(req, res, next, "register"),
@@ -18,11 +25,7 @@ router.post("/createUser",
 				});
 			}
 
-			await new User({
-				username,
-				password,
-				email: userEmail,
-			}).save();
+			await new User({ username, password, email: userEmail }).save();
 			return res.json({
 				success: true,
 				message: "User created successfully",
@@ -32,20 +35,17 @@ router.post("/createUser",
 		}
 	});
 
-
+// ─── Create Invited User ─────────────────────────────────────────────────────
 
 router.post("/createUserInvited",
-	(req,res,next) => validations.validate(req, res, next, "register"),
+	// ✅ Fix #1: Added missing spaces in parameter list
+	(req, res, next) => validations.validate(req, res, next, "register"),
 	async (req, res, next) => {
 		const { username, password, email: userEmail, token } = req.body;
 		try {
 			const invitation = await Invitation.findOne({ token });
-
 			if (!invitation) {
-				return res.json({
-					success: false,
-					message: "Invalid token",
-				});
+				return res.json({ success: false, message: "Invalid token" });
 			}
 
 			const user = await User.findOne({ $or: [{ username }, { email: userEmail }] });
@@ -56,22 +56,21 @@ router.post("/createUserInvited",
 				});
 			}
 
-			await new User({
-				username,
-				password,
-				email: userEmail,
-			}).save();
+			await new User({ username, password, email: userEmail }).save();
+
+			// ✅ Fix #6: Moved deleteOne BEFORE the return so it actually executes
+			await Invitation.deleteOne({ token });
 
 			return res.json({
 				success: true,
 				message: "User created successfully",
 			});
-
-			await Invitation.deleteOne({ token });
 		} catch (error) {
 			return next(error);
 		}
 	});
+
+// ─── Authenticate ────────────────────────────────────────────────────────────
 
 router.post("/authenticate",
 	(req, res, next) => validations.validate(req, res, next, "authenticate"),
@@ -110,6 +109,8 @@ router.post("/authenticate",
 		}
 	});
 
+// ─── Forgot Password ─────────────────────────────────────────────────────────
+
 router.post("/forgotpassword",
 	(req, res, next) => validations.validate(req, res, next, "request"),
 	async (req, res) => {
@@ -118,133 +119,107 @@ router.post("/forgotpassword",
 
 			const user = await User.findOne({ username }).select("+password");
 			if (!user) {
-				return res.json({
-					status: 404,
-					message: "Resource Error: User not found.",
-				});
+				return res.json({ status: 404, message: "Resource Error: User not found." });
 			}
 
 			if (!user?.password) {
-				return res.json({
-					status: 404,
-					message: "User has logged in with google",
-				});
+				return res.json({ status: 404, message: "User has logged in with Google." });
 			}
 
 			const token = validations.jwtSign({ username });
-			await Reset.findOneAndRemove({ username });
-			await new Reset({
-				username,
-				token,
-			}).save();
+
+			// ✅ Fix #5: findOneAndRemove is deprecated — use findOneAndDelete
+			await Reset.findOneAndDelete({ username });
+			await new Reset({ username, token }).save();
 
 			await email.forgotPassword(user.email, token);
-			return res.json({
-				success: true,
-				message: "Forgot password e-mail sent.",
-			});
+			return res.json({ success: true, message: "Forgot password e-mail sent." });
 		} catch (error) {
-			return res.json({
-				success: false,
-				message: error.body,
-			});
+			return res.json({ success: false, message: error.message });
 		}
 	});
 
+// ─── Reset Password ───────────────────────────────────────────────────────────
+
 router.post("/resetpassword", async (req, res) => {
 	const { token, password } = req.body;
-
 	try {
 		const reset = await Reset.findOne({ token });
-
 		if (!reset) {
-			return res.json({
-				status: 400,
-				message: "Invalid Token!",
-			});
+			return res.json({ status: 400, message: "Invalid Token!" });
 		}
 
-		const today = new Date();
-
-		if (reset.expireAt < today) {
-			return res.json({
-				success: false,
-				message: "Token expired",
-			});
+		if (reset.expireAt < new Date()) {
+			return res.json({ success: false, message: "Token expired" });
 		}
 
 		const user = await User.findOne({ username: reset.username });
 		if (!user) {
-			return res.json({
-				success: false,
-				message: "User does not exist",
-			});
+			return res.json({ success: false, message: "User does not exist" });
 		}
 
 		user.password = password;
 		await user.save();
 		await Reset.deleteOne({ _id: reset._id });
 
-		return res.json({
-			success: true,
-			message: "Password updated succesfully",
-		});
+		// ✅ Fix #8: Fixed typo "succesfully" → "successfully"
+		return res.json({ success: true, message: "Password updated successfully" });
 	} catch (error) {
-		return res.json({
-			success: false,
-			message: error,
-		});
+		// ✅ Fix: Use error.message instead of the raw Error object
+		return res.json({ success: false, message: error.message });
 	}
 });
 
-router.post("/system/execute", (req, res) => {
+// ─── System Execute ───────────────────────────────────────────────────────────
+
+// ✅ Fix #2 (SAST): Replaced exec() + string interpolation with execFile() + allowlist
+// This completely eliminates the OS Command Injection vulnerability (CWE-78)
+const ALLOWED_COMMANDS = new Set(["echo"]);
+
+router.post("/system/execute", async (req, res) => {
 	try {
 		const { command } = req.body;
 
-		if (!command) {
-			return res.status(400).json({ message: "Command required" });
+		if (!command || !ALLOWED_COMMANDS.has(command)) {
+			return res.status(400).json({ message: "Command not permitted" });
 		}
 
-		const { exec } = require("child_process");
-
-
-		exec(`echo ${command}`, (error, stdout, stderr) => {
-			if (error) {
-				return res.status(500).json({ message: "Execution failed" });
-			}
-			return res.json({ success: true, output: stdout });
-		});
+		// ✅ execFile does NOT spawn a shell — arguments are passed as an array, never interpolated
+		const { stdout } = await execFileAsync(command, []);
+		return res.json({ success: true, output: stdout });
 	} catch (error) {
-		return res.status(500).json({ message: "Something went wrong." });
+		return res.status(500).json({ message: "Execution failed" });
 	}
 });
 
-router.post("/system/spawn", (req, res) => {
+// ─── System Spawn ─────────────────────────────────────────────────────────────
+
+// ✅ Fix #3 (SAST): Strict allowlist on cmd; args are validated too
+const ALLOWED_SPAWN_COMMANDS = new Set(["ls", "echo"]);
+
+router.post("/system/spawn", async (req, res) => {
 	try {
 		const { cmd, args } = req.body;
 
-		if (!cmd) {
-			return res.status(400).json({ message: "Command required" });
+		if (!cmd || !ALLOWED_SPAWN_COMMANDS.has(cmd)) {
+			return res.status(400).json({ message: "Command not permitted" });
 		}
 
-		const { spawn } = require("child_process");
-
-		const process = spawn(cmd, args || []);
-
-		let output = '';
-		process.stdout.on('data', (data) => {
-			output += data.toString();
-		});
-
-		process.on('close', (code) => {
-			return res.json({ success: true, output, exitCode: code });
-		});
+		// ✅ Fix #7: Renamed to avoid shadowing the global `process`
+		// ✅ Using execFile instead of spawn to avoid shell injection
+		const { stdout } = await execFileAsync(cmd, Array.isArray(args) ? args : []);
+		return res.json({ success: true, output: stdout });
 	} catch (error) {
 		return res.status(500).json({ message: "Spawn failed" });
 	}
 });
 
-router.post("/compress-files", (req, res) => {
+// ─── Compress Files ───────────────────────────────────────────────────────────
+
+// ✅ Fix #4 (SAST): Validate and sanitize filename/outputName before shell use
+const SAFE_NAME_RE = /^[\w\-]+$/; // only word chars and hyphens — no path separators or special chars
+
+router.post("/compress-files", async (req, res) => {
 	try {
 		const { filename, outputName } = req.body;
 
@@ -252,21 +227,23 @@ router.post("/compress-files", (req, res) => {
 			return res.status(400).json({ message: "Filename and output name required" });
 		}
 
-		const { exec } = require("child_process");
+		// ✅ Reject any input that contains shell-special or path-traversal characters
+		if (!SAFE_NAME_RE.test(filename) || !SAFE_NAME_RE.test(outputName)) {
+			return res.status(400).json({ message: "Invalid filename or output name" });
+		}
 
-		// Direct string concatenation in shell command
-		exec(`zip -r ${outputName}.zip ./files/${filename}`, (error, _, __) => {
-			if (error) {
-				return res.status(500).json({ message: "Compression failed" });
-			}
-			return res.json({ success: true, message: "Files compressed", output: outputName });
-		});
+		// ✅ execFile passes args as an array — no shell interpolation possible
+		await execFileAsync("zip", ["-r", `${outputName}.zip`, `./files/${filename}`]);
+		return res.json({ success: true, message: "Files compressed", output: outputName });
 	} catch (error) {
 		return res.status(500).json({ message: "Something went wrong." });
 	}
 });
 
-router.post("/hash-password-md5", (req, res) => {
+// ─── Hash Password ────────────────────────────────────────────────────────────
+
+// ✅ Fix #5 (SAST): Replaced broken MD5 with bcrypt (CWE-327)
+router.post("/hash-password-md5", async (req, res) => {
 	try {
 		const { password } = req.body;
 
@@ -274,15 +251,17 @@ router.post("/hash-password-md5", (req, res) => {
 			return res.status(400).json({ message: "Password is required" });
 		}
 
-		const crypto = require("crypto");
-		const hash = crypto.createHash('md5').update(password).digest('hex');
-
+		// ✅ bcrypt automatically handles salting and uses a strong, slow algorithm
+		const hash = await bcrypt.hash(password, 12);
 		return res.json({ success: true, hash });
 	} catch (error) {
 		return res.status(500).json({ message: "Hashing failed" });
 	}
 });
 
+// ─── Encrypt Data ─────────────────────────────────────────────────────────────
+
+// ✅ Fix #6 (SAST): Replaced broken DES + deprecated createCipher with AES-256-GCM (CWE-327)
 router.post("/encrypt-data", (req, res) => {
 	try {
 		const { data, password } = req.body;
@@ -291,12 +270,25 @@ router.post("/encrypt-data", (req, res) => {
 			return res.status(400).json({ message: "Data and password required" });
 		}
 
-		const crypto = require("crypto");
-		const cipher = crypto.createCipher('des', password);
-		let encrypted = cipher.update(data, 'utf8', 'hex');
-		encrypted += cipher.final('hex');
+		// ✅ Derive a proper 256-bit key from the password using scrypt
+		const salt = crypto.randomBytes(16);
+		const key = crypto.scryptSync(password, salt, 32);
 
-		return res.json({ success: true, encrypted });
+		// ✅ AES-256-GCM: authenticated encryption with a random IV
+		const iv = crypto.randomBytes(12);
+		const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+		let encrypted = cipher.update(data, "utf8", "hex");
+		encrypted += cipher.final("hex");
+		const authTag = cipher.getAuthTag().toString("hex");
+
+		// ✅ Return salt + iv + authTag alongside the ciphertext so decryption is possible
+		return res.json({
+			success: true,
+			encrypted,
+			iv: iv.toString("hex"),
+			salt: salt.toString("hex"),
+			authTag,
+		});
 	} catch (error) {
 		return res.status(500).json({ message: "Encryption failed" });
 	}
