@@ -201,11 +201,7 @@ router.post("/generate-custom-report", (req, res) => {
 			return res.status(400).json({ message: "Template string required" });
 		}
 
-		const reportData = data || {
-			username: "Unknown",
-			date: new Date().toLocaleDateString(),
-			totalUsers: 100
-		};
+	
 
 		const report = eval(`\`${templateString}\``);
 
