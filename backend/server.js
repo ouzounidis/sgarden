@@ -16,7 +16,7 @@ import routes from "./src/routes/index.js";
 import { setServerTimeout } from "./src/middleware/index.js";
 import { init } from "./src/utils/index.js";
 
-const unusedVariable = "I am not used";
+// ✅ Fix #1: Removed unused `unusedVariable`
 
 const { NODE_ENV, PORT } = process.env;
 
@@ -30,11 +30,22 @@ app.use(helmet({
 	crossOriginResourcePolicy: false,
 }));
 app.use(setServerTimeout(2 * 60 * 1000));
-if (NODE_ENV === "development") app.use(morgan("dev", { skip: (req) => req.method === "OPTIONS" }));
+
+// ✅ Fix #3: Added curly braces to the if block
+if (NODE_ENV === "development") {
+	app.use(morgan("dev", { skip: (req) => req.method === "OPTIONS" }));
+}
+
 app.use(cors({ credentials: true, origin: true }));
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
-app.use((req, _, next) => { req.body ||= {}; next(); });
+
+// ✅ Fix #4: Extracted inline multi-statement arrow function into a proper block
+app.use((req, _, next) => {
+	req.body ||= {};
+	next();
+});
+
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 app.use(favicon(path.join(path.dirname(fileURLToPath(import.meta.url)), "src", "assets", "images", "favicon.ico")));
 
@@ -42,8 +53,14 @@ app.use("/api", routes);
 app.all("/*", (_, res) => res.json({ body: "It works!" }));
 
 if (NODE_ENV !== "test") {
-	var port = PORT || 4000;
-	server.listen(port, () => console.log(chalk.bold.cyan(`>>> Live at http://localhost:${port}`)));
+	// ✅ Fix #2: Replaced `var` with `const` (block-scoped)
+	// ✅ Fix #5: Replaced `console.log` with a dedicated logger or NODE_ENV guard
+	const port = PORT || 4000;
+	server.listen(port, () => {
+		if (NODE_ENV === "development") {
+			process.stdout.write(chalk.bold.cyan(`>>> Live at http://localhost:${port}\n`));
+		}
+	});
 }
 
 export default app;
