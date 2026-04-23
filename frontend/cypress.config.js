@@ -1,4 +1,4 @@
-'use strict';
+// ✅ Fix #7: Removed redundant 'use strict' (Node.js CJS modules are strict by default in most configs)
 
 const { defineConfig } = require('cypress');
 
@@ -14,17 +14,30 @@ module.exports = defineConfig({
     pageLoadTimeout: 20000,
     video: false,
     screenshotOnRunFailure: false,
-    setupNodeEvents(on, _config) {
-      const C = { reset: '\x1b[0m', grey: '\x1b[90m', green: '\x1b[32m', red: '\x1b[31m', bold: '\x1b[1m', cyan: '\x1b[36m' };
-      const grey = (s) => `${C.grey}${s}${C.reset}`;
+
+    // ✅ Fix #3: Renamed `_config` → `config` since it IS used (returned at the end)
+    setupNodeEvents(on, config) {
+      // ✅ Fix #1 & #6: Expanded the `C` color-codes object across multiple lines
+      const C = {
+        reset: '\x1b[0m',
+        grey:  '\x1b[90m',
+        green: '\x1b[32m',
+        red:   '\x1b[31m',
+        bold:  '\x1b[1m',
+        cyan:  '\x1b[36m',
+      };
+
+      const grey  = (s) => `${C.grey}${s}${C.reset}`;
       const green = (s) => `${C.green}${s}${C.reset}`;
-      const red = (s) => `${C.red}${s}${C.reset}`;
-      const bold = (s) => `${C.bold}${s}${C.reset}`;
-      const cyan = (s) => `${C.cyan}${s}${C.reset}`;
+      const red   = (s) => `${C.red}${s}${C.reset}`;
+      const bold  = (s) => `${C.bold}${s}${C.reset}`;
+      const cyan  = (s) => `${C.cyan}${s}${C.reset}`;
+
+      // ✅ Fix #4: Removed fake-alignment spaces from SPEC_NAMES keys
       const SPEC_NAMES = {
-        'cypress/e2e/smoke/1-easy.cy.js':   'Easy   (M1–M8)',
+        'cypress/e2e/smoke/1-easy.cy.js': 'Easy   (M1–M8)',
         'cypress/e2e/smoke/2-medium.cy.js': 'Medium (M9–M17)',
-        'cypress/e2e/smoke/3-hard.cy.js':   'Hard   (M18–M20)',
+        'cypress/e2e/smoke/3-hard.cy.js': 'Hard   (M18–M20)',
       };
 
       const formatPercent = (numerator, denominator) => {
@@ -57,12 +70,13 @@ module.exports = defineConfig({
         process.stdout.write(`\n  ${bold('▶')}  Running ${bold(currentSpec)}\n`);
       });
 
-      on('after:spec', (spec, results) => {
+      // ✅ Fix #2: Renamed unused `spec` parameter to `_spec` to signal it's intentionally ignored
+      on('after:spec', (_spec, results) => {
         const p = results.stats.passes ?? 0;
         const f = results.stats.failures ?? 0;
         const total = p + f;
         const completion = formatPercent(p, total);
-        const points = completion;
+        // ✅ Fix #5: Removed redundant `points` alias — use `completion` directly
         const durationMs = results.stats.duration ?? (Date.now() - specStart);
         const s = Math.round(durationMs / 1000);
         const icon = f === 0 ? green('✓') : red('✗');
@@ -70,7 +84,7 @@ module.exports = defineConfig({
           ? green(`${p} passed`)
           : `${green(`${p} passed`)}, ${red(`${f} failed`)}`;
         const missionSummary = `${bold(`${p}/${total}`)} complete (${completion})`;
-        const pointsSummary = `points: ${bold(points)}`;
+        const pointsSummary = `points: ${bold(completion)}`;
         process.stdout.write(`  ${icon}  ${currentSpec} — ${counts} | ${missionSummary} | ${pointsSummary} ${grey(`(${s}s)`)}\n`);
 
         const missionStats = new Map();
@@ -115,7 +129,8 @@ module.exports = defineConfig({
         }
       });
 
-      return _config;
+      // ✅ Fix #3: Return the correctly named `config`
+      return config;
     },
   },
   env: {
